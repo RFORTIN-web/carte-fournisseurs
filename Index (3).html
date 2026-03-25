@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Carte Fournisseurs / Contacts</title>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet"/>
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #0f0f1a; color: #e2e8f0; display: flex; height: 100vh; overflow: hidden; }
+
+    /* Sidebar */
+    #sidebar {
+      width: 300px; min-width: 300px; background: #1a1a2e; padding: 20px;
+      display: flex; flex-direction: column; gap: 16px; overflow-y: auto;
+      border-right: 1px solid #2a2a4a;
+    }
+    #sidebar h2 { font-size: 18px; font-weight: 700; color: #f1f5f9; margin-bottom: 4px; }
+    #sidebar label { font-size: 13px; color: #94a3b8; font-weight: 500; display: block; margin-bottom: 4px; }
+    #sidebar select, #sidebar input {
+      width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2a4a;
+      background: #0f0f1a; color: #e2e8f0; font-size: 14px; outline: none;
+    }
+    #sidebar select:focus, #sidebar input:focus { border-color: #3b82f6; }
+
+    .filter-group { display: flex; flex-direction: column; gap: 4px; }
+
+    .legende { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+    .legende-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #94a3b8; }
+    .legende-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+    #resultats { margin-top: 8px; font-size: 13px; color: #cbd5e1; line-height: 1.5; }
+
+    .btn-group { display: flex; gap: 8px; margin-top: 8px; }
+    .btn {
+      flex: 1; padding: 8px 12px; border-radius: 6px; border: none; cursor: pointer;
+      font-size: 13px; font-weight: 600; transition: all 0.2s;
+    }
+    .btn-primary { background: #3b82f6; color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-secondary { background: #2a2a4a; color: #e2e8f0; }
+    .btn-secondary:hover { background: #3a3a5a; }
+
+    #deal-badge {
+      display: none; padding: 8px 12px; background: #14532d; border: 1px solid #22c55e;
+      border-radius: 8px; font-size: 13px; color: #86efac;
+    }
+
+    /* Map */
+    #map { flex: 1; height: 100%; }
+
+    /* Popups */
+    .mapboxgl-popup-content {
+      background: #1a1a2e !important; color: #e2e8f0 !important; border-radius: 8px !important;
+      padding: 12px !important; font-size: 13px !important; border: 1px solid #2a2a4a !important;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4) !important; max-width: 280px !important;
+    }
+    .mapboxgl-popup-tip { border-top-color: #1a1a2e !important; }
+    .mapboxgl-popup-close-button { color: #94a3b8 !important; font-size: 18px !important; }
+    .popup-title { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+    .popup-type { color: #60a5fa; font-size: 12px; margin-bottom: 4px; }
+    .popup-link { color: #3b82f6; text-decoration: none; font-size: 12px; }
+    .popup-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h2>Carte Fournisseurs</h2>
+
+  <div class="filter-group">
+    <label for="sel_deal">Deal (centrer sur)</label>
+    <select id="sel_deal">
+      <option value="">-- Aucun --</option>
+    </select>
+  </div>
+
+  <div id="deal-badge"></div>
+
+  <div class="filter-group">
+    <label for="sel_type">Type de fournisseur</label>
+    <select id="sel_type">
+      <option value="">-- Tous --</option>
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <label for="inp_rayon">Rayon (km)</label>
+    <input type="number" id="inp_rayon" placeholder="Ex: 50" min="1" max="500"/>
+  </div>
+
+  <div class="filter-group">
+    <label for="sel_statut">Statut</label>
+    <select id="sel_statut">
+      <option value="actif">Actifs seulement</option>
+      <option value="inactif">Inactifs seulement</option>
+      <option value="tous">Tous</option>
+    </select>
+  </div>
+
+  <div class="btn-group">
+    <button class="btn btn-primary" onclick="filtrerCarte()">Filtrer</button>
+    <button class="btn btn-secondary" onclick="resetCarte()">Réinitialiser</button>
+  </div>
+
+  <div class="legende">
+    <div class="legende-item"><div class="legende-dot" style="background:#3b82f6;"></div> Contact</div>
+    <div class="legende-item"><div class="legende-dot" style="background:#a855f7;"></div> Fournisseur</div>
+    <div class="legende-item"><div class="legende-dot" style="background:#22c55e;"></div> Deal</div>
+    <div class="legende-item"><div class="legende-dot" style="background:#6b7280;"></div> Inactif</div>
+  </div>
+
+  <div id="resultats"><b>Chargement...</b></div>
+</div>
+
+<div id="map"></div>
+
+<script>
+// ============================================================
+// REMPLACE CETTE LIGNE PAR TON VRAI TOKEN MAPBOX
+// ============================================================
+mapboxgl.accessToken = 'pk.eyJ1IjoieWFuaXMtYm91ZGluYXIiLCJhIjoiY21uM21yY3JrMWNtazJwcXN0M3oxaDJocSJ9.cgs8FbevvCmUF6UKI7bHfA';
+
+var map = new mapboxgl.Map({
+  container: 'map',
+  style: 'mapbox://styles/mapbox/dark-v11',
+  center: [-73.5673, 45.5017],
+  zoom: 9
+});
+
+map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+
+var tousMarkers = [];
+var dealActuelPos = null;
+var dealActuelId = null;
+
+// ============================================================
+// DONNÉES — Chargées depuis Zoho CRM ou données test
+// ============================================================
+var donneesJSON = null;
+
+// Essaye de charger les données depuis l'URL (si intégré dans Zoho)
+function chargerDonnees() {
+  var params = new URLSearchParams(window.location.search);
+  var dataUrl = params.get('data_url');
+
+  if (dataUrl) {
+    fetch(dataUrl)
+      .then(function(r) { return r.json(); })
+      .then(function(data) { initialiserCarte(data); })
+      .catch(function(e) {
+        console.error('Erreur chargement données:', e);
+        initialiserAvecDonneesTest();
+      });
+  } else if (window.ZOHO_DATA) {
+    initialiserCarte(window.ZOHO_DATA);
+  } else {
+    initialiserAvecDonneesTest();
+  }
+}
+
+function initialiserAvecDonneesTest() {
+  // Données de démonstration pour tester la carte
+  var donneesTest = {
+    contacts: [
+      { id: "1001", nom: "Jean Tremblay", lat: "45.5088", lng: "-73.5878", type: "Courtier", inactif: "false", source: "contact" },
+      { id: "1002", nom: "Marie Gagnon", lat: "45.5317", lng: "-73.6200", type: "Évaluateur", inactif: "false", source: "contact" },
+      { id: "1003", nom: "Pierre Lavoie", lat: "45.4700", lng: "-73.5500", type: "Notaire", inactif: "true", source: "contact" },
+      { id: "1004", nom: "Sophie Bouchard", lat: "45.5600", lng: "-73.6400", type: "Courtier", inactif: "false", source: "contact" }
+    ],
+    vendors: [
+      { id: "2001", nom: "Plomberie ABC", lat: "45.5400", lng: "-73.5700", type: "Plomberie", inactif: "false", source: "vendor" },
+      { id: "2002", nom: "Électricité XYZ", lat: "45.4900", lng: "-73.6100", type: "Électricité", inactif: "false", source: "vendor" },
+      { id: "2003", nom: "Toiture ProToit", lat: "45.5200", lng: "-73.5300", type: "Toiture", inactif: "false", source: "vendor" },
+      { id: "2004", nom: "Peinture Léger", lat: "45.5500", lng: "-73.5900", type: "Peinture", inactif: "true", source: "vendor" },
+      { id: "2005", nom: "Construction Martin", lat: "45.4600", lng: "-73.5000", type: "Général", inactif: "false", source: "vendor" },
+      { id: "2006", nom: "Déneigement Nord", lat: "45.5800", lng: "-73.6500", type: "Déneigement", inactif: "false", source: "vendor" }
+    ],
+    deals: [
+      { id: "3001", nom: "Projet Résidence Laval", lat: "45.5700", lng: "-73.6900", source: "deal" },
+      { id: "3002", nom: "Rénovation Plateau", lat: "45.5225", lng: "-73.5800", source: "deal" },
+      { id: "3003", nom: "Duplex Verdun", lat: "45.4500", lng: "-73.5600", source: "deal" }
+    ]
+  };
+  initialiserCarte(donneesTest);
+}
+
+function initialiserCarte(donnees) {
+  donneesJSON = donnees;
+  var typesSet = new Set();
+
+  // Dropdown deals
+  var selDeal = document.getElementById('sel_deal');
+  if (donnees.deals) {
+    donnees.deals.forEach(function(d) {
+      var opt = document.createElement('option');
+      opt.value = d.id;
+      opt.textContent = d.nom;
+      opt.dataset.lat = d.lat;
+      opt.dataset.lng = d.lng;
+      selDeal.appendChild(opt);
+    });
+  }
+
+  // Créer les markers
+  function creerMarker(item) {
+    var lat = parseFloat(item.lat);
+    var lng = parseFloat(item.lng);
+    if (isNaN(lat) || isNaN(lng)) return;
+
+    var color = '#3b82f6'; // contact
+    var size = 14;
+    if (item.source === 'vendor') color = '#a855f7';
+    if (item.source === 'deal') color = '#22c55e';
+    if (item.inactif === 'true' || item.inactif === 'Oui') color = '#6b7280';
+
+    // Wrapper invisible plus grand = zone de clic stable
+    var el = document.createElement('div');
+    el.style.width = '30px';
+    el.style.height = '30px';
+    el.style.display = 'flex';
+    el.style.alignItems = 'center';
+    el.style.justifyContent = 'center';
+    el.style.cursor = 'pointer';
+
+    // Le point visible à l'intérieur
+    var dot = document.createElement('div');
+    dot.style.width = size + 'px';
+    dot.style.height = size + 'px';
+    dot.style.borderRadius = '50%';
+    dot.style.background = color;
+    dot.style.border = '2px solid rgba(255,255,255,0.3)';
+    dot.style.transition = 'transform 0.2s';
+    dot.style.pointerEvents = 'none';
+    el.appendChild(dot);
+
+    el.addEventListener('mouseenter', function() {
+      dot.style.transform = 'scale(1.5)';
+      el.style.zIndex = '10';
+    });
+    el.addEventListener('mouseleave', function() {
+      dot.style.transform = 'scale(1)';
+      el.style.zIndex = '1';
+    });
+
+    var marker = new mapboxgl.Marker({ element: el })
+      .setLngLat([lng, lat])
+      .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(
+        '<div class="popup-title">' + (item.nom || 'Sans nom') + '</div>' +
+        (item.type ? '<div class="popup-type">' + item.type + '</div>' : '') +
+        '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">' +
+          (item.source === 'contact' ? 'Contact' : item.source === 'vendor' ? 'Fournisseur' : 'Deal') +
+          (item.inactif === 'true' || item.inactif === 'Oui' ? ' (Inactif)' : '') +
+        '</div>' +
+        '<a class="popup-link" href="https://crm.zoho.com/crm/org/tab/' +
+          (item.source === 'contact' ? 'Contacts' : item.source === 'vendor' ? 'Vendors' : 'Deals') +
+          '/' + item.id + '" target="_blank">Ouvrir dans CRM →</a>'
+      ))
+      .addTo(map);
+
+    marker._data = item;
+    marker._el = el;
+    marker._dot = dot;
+    tousMarkers.push(marker);
+
+    if (item.type && item.source !== 'deal') typesSet.add(item.type);
+  }
+
+  // Ajouter tous les markers
+  var all = [].concat(donnees.contacts || []).concat(donnees.vendors || []).concat(donnees.deals || []);
+  all.forEach(creerMarker);
+
+  // Dropdown types
+  var selType = document.getElementById('sel_type');
+  Array.from(typesSet).sort().forEach(function(t) {
+    var opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = t;
+    selType.appendChild(opt);
+  });
+
+  // Maj résultats
+  var nbFournisseurs = tousMarkers.filter(function(m) { return m._data.source !== 'deal'; }).length;
+  document.getElementById('resultats').innerHTML = '<b>' + nbFournisseurs + '</b> fournisseurs/contacts chargés';
+
+  // Lire params URL
+  lireParamsURL();
+}
+
+// ============================================================
+// FILTRES
+// ============================================================
+function filtrerCarte() {
+  var selDeal = document.getElementById('sel_deal');
+  var typeFiltre = document.getElementById('sel_type').value;
+  var rayonKm = parseFloat(document.getElementById('inp_rayon').value) || 0;
+  var statutFiltre = document.getElementById('sel_statut').value;
+
+  // Centrer sur deal si sélectionné
+  if (selDeal.value) {
+    var opt = selDeal.options[selDeal.selectedIndex];
+    dealActuelPos = { lat: parseFloat(opt.dataset.lat), lng: parseFloat(opt.dataset.lng) };
+    dealActuelId = selDeal.value;
+    map.flyTo({ center: [dealActuelPos.lng, dealActuelPos.lat], zoom: 12 });
+    document.getElementById('deal-badge').style.display = 'block';
+    document.getElementById('deal-badge').innerHTML = '📍 ' + opt.textContent;
+  }
+
+  var nbVisibles = 0;
+  tousMarkers.forEach(function(m) {
+    var d = m._data;
+    var visible = true;
+
+    // Deals : afficher seulement le deal sélectionné
+    if (d.source === 'deal') {
+      if (dealActuelId) {
+        visible = (d.id === dealActuelId);
+        if (visible) {
+          m._dot.style.background = '#facc15';
+          m._dot.style.width = '20px';
+          m._dot.style.height = '20px';
+        }
+      } else {
+        visible = false;
+      }
+      m._el.style.display = visible ? '' : 'none';
+      return;
+    }
+
+    // Filtre type
+    if (typeFiltre && d.type !== typeFiltre) visible = false;
+
+    // Filtre statut
+    if (statutFiltre === 'actif' && (d.inactif === 'true' || d.inactif === 'Oui')) visible = false;
+    if (statutFiltre === 'inactif' && d.inactif !== 'true' && d.inactif !== 'Oui') visible = false;
+
+    // Filtre rayon
+    if (rayonKm > 0 && dealActuelPos) {
+      var dist = calculerDistance(dealActuelPos.lat, dealActuelPos.lng, parseFloat(d.lat), parseFloat(d.lng));
+      if (dist > rayonKm * 1000) visible = false;
+    }
+
+    m._el.style.display = visible ? '' : 'none';
+
+    if (visible) nbVisibles++;
+  });
+
+  majResultats(nbVisibles, typeFiltre, rayonKm);
+}
+
+function majResultats(nb, type, rayon) {
+  var div = document.getElementById('resultats');
+  if (nb === undefined) {
+    div.innerHTML = '<b>' + tousMarkers.filter(function(m) { return m._data.source !== 'deal'; }).length + '</b> fournisseurs/contacts chargés';
+    return;
+  }
+  var txt = '<b>' + nb + '</b> fournisseur(s) visible(s)';
+  if (type) txt += '<br>Type : <span style="color:#3b82f6;">' + type + '</span>';
+  if (rayon) txt += '<br>Rayon : <span style="color:#f59e0b;">' + rayon + ' km</span>';
+  div.innerHTML = txt;
+}
+
+function resetCarte() {
+  dealActuelPos = null;
+  dealActuelId = null;
+  document.getElementById('sel_deal').value = '';
+  document.getElementById('sel_type').value = '';
+  document.getElementById('inp_rayon').value = '';
+  document.getElementById('sel_statut').value = 'actif';
+  document.getElementById('deal-badge').style.display = 'none';
+
+  tousMarkers.forEach(function(m) {
+    var d = m._data;
+    m._el.style.display = '';
+    m._dot.style.width = '14px';
+    m._dot.style.height = '14px';
+    m._dot.style.transform = 'scale(1)';
+    if (d.source === 'deal') m._dot.style.background = '#22c55e';
+    else if (d.source === 'contact') m._dot.style.background = (d.inactif === 'true' || d.inactif === 'Oui') ? '#6b7280' : '#3b82f6';
+    else if (d.source === 'vendor') m._dot.style.background = (d.inactif === 'true' || d.inactif === 'Oui') ? '#6b7280' : '#a855f7';
+  });
+
+  map.flyTo({ center: [-73.5673, 45.5017], zoom: 9 });
+  majResultats();
+}
+
+function calculerDistance(lat1, lng1, lat2, lng2) {
+  var R = 6371000;
+  var dLat = (lat2 - lat1) * Math.PI / 180;
+  var dLng = (lng2 - lng1) * Math.PI / 180;
+  var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function lireParamsURL() {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('deal_id')) {
+    document.getElementById('sel_deal').value = params.get('deal_id');
+    filtrerCarte();
+  }
+}
+
+// ============================================================
+// DÉMARRAGE
+// ============================================================
+map.on('load', function() {
+  chargerDonnees();
+});
+</script>
+</body>
+</html>
