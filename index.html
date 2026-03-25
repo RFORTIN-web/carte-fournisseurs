@@ -140,24 +140,30 @@ var dealActuelId = null;
 // ============================================================
 var donneesJSON = null;
 
-// Essaye de charger les données depuis l'URL (si intégré dans Zoho)
+// Charger les données depuis l'API Zoho Creator
 function chargerDonnees() {
-  var params = new URLSearchParams(window.location.search);
-  var dataUrl = params.get('data_url');
+  var apiUrl = 'https://www.zohoapis.com/creator/custom/rfortincom/map_data?publickey=PCrzd0xZwR31YUOUsT7mpXZRS';
 
-  if (dataUrl) {
-    fetch(dataUrl)
-      .then(function(r) { return r.json(); })
-      .then(function(data) { initialiserCarte(data); })
-      .catch(function(e) {
-        console.error('Erreur chargement données:', e);
-        initialiserAvecDonneesTest();
-      });
-  } else if (window.ZOHO_DATA) {
-    initialiserCarte(window.ZOHO_DATA);
-  } else {
-    initialiserAvecDonneesTest();
-  }
+  fetch(apiUrl)
+    .then(function(r) {
+      if (!r.ok) throw new Error('API Zoho erreur ' + r.status);
+      return r.json();
+    })
+    .then(function(response) {
+      // La réponse Zoho est { "code": 3000, "result": "..." }
+      var data;
+      if (response.result) {
+        data = typeof response.result === 'string' ? JSON.parse(response.result) : response.result;
+      } else {
+        data = response;
+      }
+      console.log('Données CRM chargées:', data.contacts.length, 'contacts,', data.vendors.length, 'vendors,', data.deals.length, 'deals');
+      initialiserCarte(data);
+    })
+    .catch(function(e) {
+      console.warn('Erreur API, fallback données test:', e);
+      initialiserAvecDonneesTest();
+    });
 }
 
 function initialiserAvecDonneesTest() {
@@ -213,7 +219,15 @@ function initialiserCarte(donnees) {
     var size = 14;
     if (item.source === 'vendor') color = '#a855f7';
     if (item.source === 'deal') color = '#22c55e';
-    if (item.inactif === 'true' || item.inactif === 'Oui') color = '#6b7280';
+
+    // Normaliser inactif (peut être boolean, string, etc.)
+    var estInactif = item.inactif === true || item.inactif === 'true' || item.inactif === 'Oui';
+    if (estInactif) color = '#6b7280';
+
+    // Normaliser type (peut être string ou array)
+    var typeStr = '';
+    if (Array.isArray(item.type)) typeStr = item.type.join(', ');
+    else if (item.type) typeStr = item.type;
 
     // Wrapper invisible plus grand = zone de clic stable
     var el = document.createElement('div');
@@ -248,10 +262,10 @@ function initialiserCarte(donnees) {
       .setLngLat([lng, lat])
       .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(
         '<div class="popup-title">' + (item.nom || 'Sans nom') + '</div>' +
-        (item.type ? '<div class="popup-type">' + item.type + '</div>' : '') +
+        (typeStr ? '<div class="popup-type">' + typeStr + '</div>' : '') +
         '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">' +
           (item.source === 'contact' ? 'Contact' : item.source === 'vendor' ? 'Fournisseur' : 'Deal') +
-          (item.inactif === 'true' || item.inactif === 'Oui' ? ' (Inactif)' : '') +
+          (estInactif ? ' (Inactif)' : '') +
         '</div>' +
         '<a class="popup-link" href="https://crm.zoho.com/crm/org/tab/' +
           (item.source === 'contact' ? 'Contacts' : item.source === 'vendor' ? 'Vendors' : 'Deals') +
@@ -260,11 +274,17 @@ function initialiserCarte(donnees) {
       .addTo(map);
 
     marker._data = item;
+    marker._data._estInactif = estInactif;
+    marker._data._typeStr = typeStr;
     marker._el = el;
     marker._dot = dot;
     tousMarkers.push(marker);
 
-    if (item.type && item.source !== 'deal') typesSet.add(item.type);
+    // Ajouter les types au set (gérer les tableaux)
+    if (item.source !== 'deal') {
+      if (Array.isArray(item.type)) item.type.forEach(function(t) { if (t) typesSet.add(t); });
+      else if (item.type) typesSet.add(item.type);
+    }
   }
 
   // Ajouter tous les markers
@@ -328,12 +348,17 @@ function filtrerCarte() {
       return;
     }
 
-    // Filtre type
-    if (typeFiltre && d.type !== typeFiltre) visible = false;
+    // Filtre type (type peut être un tableau)
+    if (typeFiltre) {
+      if (Array.isArray(d.type)) {
+        if (d.type.indexOf(typeFiltre) === -1) visible = false;
+      } else if (d.type !== typeFiltre) visible = false;
+    }
 
-    // Filtre statut
-    if (statutFiltre === 'actif' && (d.inactif === 'true' || d.inactif === 'Oui')) visible = false;
-    if (statutFiltre === 'inactif' && d.inactif !== 'true' && d.inactif !== 'Oui') visible = false;
+    // Filtre statut (inactif peut être boolean ou string)
+    var estInactif = d._estInactif;
+    if (statutFiltre === 'actif' && estInactif) visible = false;
+    if (statutFiltre === 'inactif' && !estInactif) visible = false;
 
     // Filtre rayon
     if (rayonKm > 0 && dealActuelPos) {
@@ -377,8 +402,8 @@ function resetCarte() {
     m._dot.style.height = '14px';
     m._dot.style.transform = 'scale(1)';
     if (d.source === 'deal') m._dot.style.background = '#22c55e';
-    else if (d.source === 'contact') m._dot.style.background = (d.inactif === 'true' || d.inactif === 'Oui') ? '#6b7280' : '#3b82f6';
-    else if (d.source === 'vendor') m._dot.style.background = (d.inactif === 'true' || d.inactif === 'Oui') ? '#6b7280' : '#a855f7';
+    else if (d.source === 'contact') m._dot.style.background = d._estInactif ? '#6b7280' : '#3b82f6';
+    else if (d.source === 'vendor') m._dot.style.background = d._estInactif ? '#6b7280' : '#a855f7';
   });
 
   map.flyTo({ center: [-73.5673, 45.5017], zoom: 9 });
